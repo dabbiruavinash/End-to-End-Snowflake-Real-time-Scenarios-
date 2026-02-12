@@ -1,0 +1,79 @@
+# Schema Evolution in Snowflake 
+
+SHOW FILE FORMATS;
+
+CREATE OR REPLACE FILE FORMAT CSVTYPE 
+TYPE='CSV'
+PARSE_HEADER=TRUE
+RECORD_DELIMITER='\n'
+FIELD_DELIMITER=','
+FIELD_OPTIONALLY_ENCLOSED_BY='"'
+ENCODING='UTF8';
+
+CREATE OR REPLACE STORAGE INTEGRATION S3_INT
+TYPE = EXTERNAL_STAGE
+ENABLED=TRUE
+STORAGE_PROVIDER = 'S3'
+STORAGE_AWS_ROLE_ARN = 'replace with your AWS ARN'
+STORAGE_ALLOWED_LOCATIONS =('s3://schemaevolution-project/');
+
+DESC STORAGE INTEGRATION S3_INT;
+
+
+---Source Stage
+CREATE OR REPLACE STAGE SCHEMA_DETECT
+STORAGE_INTEGRATION=S3_INT
+URL='s3://schemaevolution-project/'
+FILE_FORMAT='CSVTYPE';
+
+
+LIST @SCHEMA_DETECT;
+
+
+----> Infer schema to create table automatically 
+
+SELECT * from table(
+                    INFER_SCHEMA(
+                    LOCATION=>'@SCHEMA_DETECT/customer_file.csv',
+                    FILE_FORMAT=>'CSVTYPE',
+                    IGNORE_CASE=>TRUE));
+
+
+---create table using template 
+
+CREATE OR REPLACE TABLE CUSTOMER_DATA
+            USING TEMPLATE (
+
+               SELECT ARRAY_AGG(OBJECT_CONSTRUCT(*)) FROM TABLE(
+                    INFER_SCHEMA(
+                    LOCATION=>'@SCHEMA_DETECT/customer_file.csv',
+                    FILE_FORMAT=>'CSVTYPE',
+                    IGNORE_CASE=>TRUE)));
+            
+
+Select * from CUSTOMER_DATA;
+
+DESC TABLE CUSTOMER_DATA;
+
+
+---- COPY INTO 
+
+COPY INTO CUSTOMER_DATA
+FROM @SCHEMA_DETECT/customer_us_file.csv
+MATCH_BY_COLUMN_NAME=CASE_INSENSITIVE;
+
+
+----- For Schema evolution
+
+ALTER TABLE CUSTOMER_DATA SET ENABLE_SCHEMA_EVOLUTION=TRUE;
+ALTER FILE FORMAT CSVTYPE SET ERROR_ON_COLUMN_COUNT_MISMATCH=FALSE;
+
+
+SHOW TABLES;
+
+COPY INTO CUSTOMER_DATA
+FROM @SCHEMA_DETECT/customer_us_file.csv
+MATCH_BY_COLUMN_NAME=CASE_INSENSITIVE;
+
+
+Select * from CUSTOMER_DATA;
